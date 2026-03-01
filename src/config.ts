@@ -18,7 +18,7 @@ export interface SecondBrainConfig {
     ollama: { model?: string; baseUrl?: string };
   };
   channels: {
-    active: string;
+    active?: string; // deprecated — all configured channels start automatically
     web: { port: number; host: string };
     telegram: { botToken?: string; allowedChatIds?: string[] };
     slack: { botToken?: string; appToken?: string; allowedUserIds?: string[] };
@@ -46,7 +46,6 @@ const DEFAULTS: SecondBrainConfig = {
     ollama: { model: "llama3.1", baseUrl: "http://localhost:11434" },
   },
   channels: {
-    active: "cli",
     web: { port: 3000, host: "localhost" },
     telegram: {},
     slack: {},

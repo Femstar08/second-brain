@@ -1,6 +1,7 @@
 // src/index.ts
 import { writeFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import type { ChannelAdapter } from "./channels/adapter.js";
 import { createCLIAdapter } from "./channels/cli.js";
 import { createWebAdapter } from "./channels/web.js";
 import { PROJECT_ROOT, STORE_DIR, MEMORY_DIR, SKILLS_DIR, loadConfig } from "./config.js";
@@ -158,29 +159,34 @@ async function main(): Promise<void> {
     availableProviders: Object.keys(providers),
   });
 
-  // Determine channel
-  const channelName = config.channels.active;
-  let channelAdapter;
+  // Start all configured channels
+  const adapters: ChannelAdapter[] = [];
 
-  if (channelName === "web") {
-    channelAdapter = createWebAdapter({
+  // Web — always start (serves UI + API)
+  adapters.push(
+    createWebAdapter({
       port: config.channels.web.port,
       host: config.channels.web.host,
       onMessage: (msg) => agent.handleMessage(msg),
-    });
-  } else if (channelName === "telegram") {
-    const token = env.TELEGRAM_BOT_TOKEN ?? config.channels.telegram.botToken;
-    if (!token) {
-      logger.error("TELEGRAM_BOT_TOKEN not set. Set it in .env or config.json");
-      process.exit(1);
-    }
+    }),
+  );
+
+  // Telegram — start if token is available
+  const telegramToken = env.TELEGRAM_BOT_TOKEN ?? config.channels.telegram.botToken;
+  if (telegramToken) {
     const allowedIds = (env.TELEGRAM_ALLOWED_CHAT_IDS ?? "").split(",").filter(Boolean);
     const { createTelegramAdapter } = await import("./channels/telegram.js");
-    channelAdapter = createTelegramAdapter(token, allowedIds, (msg) => agent.handleMessage(msg));
-  } else {
-    // Default: CLI
-    channelAdapter = createCLIAdapter((msg) => agent.handleMessage(msg));
+    adapters.push(
+      createTelegramAdapter(telegramToken, allowedIds, (msg) => agent.handleMessage(msg)),
+    );
   }
+
+  // CLI — start if no other interactive channels, or if explicitly requested
+  if (adapters.length === 0) {
+    adapters.push(createCLIAdapter((msg) => agent.handleMessage(msg)));
+  }
+
+  logger.info({ channels: adapters.map((a) => a.id) }, "Channels configured");
 
   // Start heartbeat scheduler
   if (config.heartbeat.enabled) {
@@ -206,7 +212,7 @@ async function main(): Promise<void> {
         return result.text;
       },
       async (chatId, text) => {
-        await channelAdapter.send(chatId, text);
+        await Promise.all(adapters.map((a) => a.send(chatId, text)));
       },
     );
     logger.info("Scheduler started");
@@ -215,7 +221,7 @@ async function main(): Promise<void> {
   // Graceful shutdown
   const shutdown = () => {
     logger.info("Shutting down...");
-    void channelAdapter.stop();
+    for (const a of adapters) void a.stop();
     db.close();
     releaseLock();
     process.exit(0);
@@ -223,8 +229,8 @@ async function main(): Promise<void> {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  // Start channel
-  await channelAdapter.start();
+  // Start all channels
+  await Promise.all(adapters.map((a) => a.start()));
 }
 
 main().catch((err) => {

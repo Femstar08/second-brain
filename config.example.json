@@ -16,7 +16,6 @@
     }
   },
   "channels": {
-    "active": "web",
     "web": {
       "port": 3000,
       "host": "localhost"
