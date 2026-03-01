@@ -1,0 +1,43 @@
+{
+  "provider": "claude",
+  "onboarded": true,
+  "providers": {
+    "claude": {},
+    "codex": {},
+    "openai": {
+      "model": "gpt-4o"
+    },
+    "openrouter": {
+      "model": "anthropic/claude-sonnet-4-6"
+    },
+    "ollama": {
+      "model": "llama3.1",
+      "baseUrl": "http://localhost:11434"
+    }
+  },
+  "channels": {
+    "active": "web",
+    "web": {
+      "port": 3000,
+      "host": "localhost"
+    },
+    "telegram": {},
+    "slack": {},
+    "discord": {}
+  },
+  "heartbeat": {
+    "enabled": true,
+    "intervalMinutes": 30,
+    "activeHours": {
+      "start": "08:00",
+      "end": "22:00"
+    }
+  },
+  "memory": {
+    "mode": "full",
+    "embeddings": {
+      "enabled": false,
+      "provider": "openai"
+    }
+  }
+}
