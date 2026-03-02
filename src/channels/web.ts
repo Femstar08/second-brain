@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { extname, join, resolve } from "node:path";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { Hono } from "hono";
@@ -14,6 +14,8 @@ import {
   readEnvFile,
 } from "../env.js";
 import { logger } from "../logger.js";
+import { saveMedia } from "../media/store.js";
+import type { MediaAttachment, MediaType } from "../media/types.js";
 import type { ChannelAdapter, MessageHandler } from "./adapter.js";
 
 export interface WebAppDeps {
@@ -128,6 +130,34 @@ export function setupApiRoutes(app: Hono, deps: WebAppDeps): void {
     const content = readFileSync(filePath, "utf-8");
     return c.json({ slug, content });
   });
+
+  app.post("/api/upload", async (c) => {
+    const body = await c.req.parseBody();
+    const file = body["file"];
+    if (!(file instanceof File)) {
+      return c.json({ error: "No file provided" }, 400);
+    }
+
+    const ext = extname(file.name) || ".bin";
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const path = saveMedia(buffer, ext);
+    const mimeType = file.type || "application/octet-stream";
+
+    const type: MediaType = mimeType.startsWith("image/")
+      ? "image"
+      : mimeType.startsWith("audio/")
+        ? "audio"
+        : "document";
+
+    const attachment: MediaAttachment = {
+      type,
+      path,
+      mimeType,
+      originalName: file.name,
+    };
+
+    return c.json(attachment);
+  });
 }
 
 interface WebAdapterOptions {
@@ -164,7 +194,11 @@ export function createWebAdapter(options: WebAdapterOptions): ChannelAdapter {
       async onMessage(event, ws) {
         try {
           const raw = typeof event.data === "string" ? event.data : JSON.stringify(event.data);
-          const data = JSON.parse(raw) as { type: string; text: string };
+          const data = JSON.parse(raw) as {
+            type: string;
+            text: string;
+            media?: MediaAttachment[];
+          };
           ws.send(JSON.stringify({ type: "typing" }));
 
           const result = await onMessage({
@@ -172,6 +206,7 @@ export function createWebAdapter(options: WebAdapterOptions): ChannelAdapter {
             text: data.text,
             senderId: "web-user",
             platform: "web",
+            media: data.media,
           });
 
           ws.send(JSON.stringify({ type: "response", text: result.text, done: true }));
@@ -182,6 +217,32 @@ export function createWebAdapter(options: WebAdapterOptions): ChannelAdapter {
       },
     })),
   );
+
+  // Serve uploaded media files
+  app.get("/api/media/:filename", (c) => {
+    const filename = c.req.param("filename");
+    const mediaDir = join(PROJECT_ROOT, "store", "media");
+    const filePath = resolve(mediaDir, filename);
+    if (!filePath.startsWith(resolve(mediaDir)) || !existsSync(filePath)) {
+      return c.notFound();
+    }
+    const content = readFileSync(filePath);
+    const ext = extname(filename).slice(1);
+    const mimeTypes: Record<string, string> = {
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      png: "image/png",
+      gif: "image/gif",
+      webp: "image/webp",
+      ogg: "audio/ogg",
+      mp3: "audio/mpeg",
+      mp4: "video/mp4",
+      pdf: "application/pdf",
+    };
+    return new Response(content, {
+      headers: { "Content-Type": mimeTypes[ext] || "application/octet-stream" },
+    });
+  });
 
   // Static files — serve built React app
   const webDistDir = join(PROJECT_ROOT, "web", "dist");

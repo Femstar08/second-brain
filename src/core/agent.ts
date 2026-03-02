@@ -1,6 +1,8 @@
 import type { Database } from "../db.js";
 import { clearSession, getSession, setSession } from "../db.js";
 import { logger } from "../logger.js";
+import { preprocessMedia, buildMediaFallback } from "../media/processor.js";
+import type { MediaAttachment } from "../media/types.js";
 import { loadAlwaysContext, appendDailyLog } from "../memory/index.js";
 import { buildMemoryContext, saveConversationTurn } from "../memory/search.js";
 import type { Router } from "../providers/router.js";
@@ -11,7 +13,7 @@ export interface InboundMessage {
   text: string;
   senderId: string;
   platform: string;
-  mediaPath?: string;
+  media?: MediaAttachment[];
   replyToId?: string;
 }
 
@@ -53,29 +55,40 @@ export function createAgent(config: AgentConfig): Agent {
 
       const memoryContext = [alwaysContext, searchContext].filter(Boolean).join("\n\n");
 
-      // 2. Get existing session for this chat+provider pair
+      // 2. Preprocess media attachments (transcribe audio, extract doc text)
+      const media = msg.media ? preprocessMedia(msg.media) : undefined;
+
+      // 3. Build prompt — prepend media fallback text for non-vision providers
+      let prompt = msg.text;
+      if (media?.length) {
+        const fallback = buildMediaFallback(media);
+        prompt = fallback + (prompt ? `\n\n${prompt}` : "");
+      }
+
+      // 4. Get existing session for this chat+provider pair
       const sessionId = getSession(db, msg.chatId, provider.id) ?? undefined;
 
-      // 3. Send to provider with full context
-      const result = await provider.send(msg.text, {
+      // 5. Send to provider with full context
+      const result = await provider.send(prompt, {
         chatId: msg.chatId,
         sessionId,
         memoryContext,
         skillContext: config.skillContext,
+        media,
       });
 
-      // 4. Save session if the provider returned one
+      // 6. Save session if the provider returned one
       if (result.sessionId) {
         setSession(db, msg.chatId, provider.id, result.sessionId);
       }
 
-      // 5. Save to daily log (simple + full modes)
+      // 7. Save to daily log (simple + full modes)
       if (memoryMode !== "none") {
         appendDailyLog(memoryDir, "user", msg.text);
         appendDailyLog(memoryDir, "assistant", result.text);
       }
 
-      // 6. Save to FTS memory (full mode only)
+      // 8. Save to FTS memory (full mode only)
       if (memoryMode === "full") {
         saveConversationTurn(db, msg.chatId, msg.text, result.text);
       }

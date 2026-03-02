@@ -111,6 +111,12 @@ export function startSchedulerLoop(
         logger.error({ err, taskId: task.id }, "Scheduled task failed");
         const message = err instanceof Error ? err.message : String(err);
         updateTaskAfterRun(db, task.id, `ERROR: ${message}`);
+
+        try {
+          await send(task.chatId, `⚠️ **Scheduled task failed**\n**Prompt:** ${task.prompt}\n**Error:** ${message}`);
+        } catch (sendErr) {
+          logger.error({ err: sendErr, taskId: task.id }, "Failed to send scheduled task error alert");
+        }
       }
     }
   }, intervalMs);

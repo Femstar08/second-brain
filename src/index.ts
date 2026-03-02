@@ -27,43 +27,52 @@ import type { Provider } from "./providers/types.js";
 import { loadSkills } from "./skills/loader.js";
 import { matchSkills, buildSkillContext } from "./skills/registry.js";
 
-const PID_FILE = join(STORE_DIR, "second-brain.pid");
+const PROFILE_LOCK_NAME = `second-brain${process.argv.includes("--profile") ? "-" + process.argv[process.argv.indexOf("--profile") + 1] : ""
+  }.pid`;
 
 function acquireLock(): void {
+  const pidPath = join(STORE_DIR, PROFILE_LOCK_NAME);
   mkdirSync(STORE_DIR, { recursive: true });
 
-  if (existsSync(PID_FILE)) {
-    const oldPid = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
+  if (existsSync(pidPath)) {
+    const oldPid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
     try {
-      process.kill(oldPid, 0); // check if alive
-      process.kill(oldPid, "SIGTERM");
-      logger.info({ oldPid }, "Killed previous instance");
+      if (oldPid !== process.pid) {
+        process.kill(oldPid, 0); // check if alive
+        process.kill(oldPid, "SIGTERM");
+        logger.info({ oldPid }, "Killed previous instance");
+      }
     } catch {
       // stale PID file
     }
   }
-  writeFileSync(PID_FILE, String(process.pid));
+  writeFileSync(pidPath, String(process.pid));
 }
 
 function releaseLock(): void {
   try {
-    unlinkSync(PID_FILE);
+    const pidPath = join(STORE_DIR, PROFILE_LOCK_NAME);
+    unlinkSync(pidPath);
   } catch {
     /* ignore */
   }
 }
 
 async function main(): Promise<void> {
-  console.log("\n  Second Brain\n");
+  const isProfile = process.argv.includes("--profile");
+  const profileName = isProfile ? process.argv[process.argv.indexOf("--profile") + 1] : "default";
+  console.log(`\n  Second Brain [Profile: ${profileName}]\n`);
 
   acquireLock();
 
-  const config = loadConfig();
-  const envPath = join(PROJECT_ROOT, ".env");
-  let env = readEnvFile(envPath);
+  const config = loadConfig(isProfile ? join(PROJECT_ROOT, "profiles", profileName, "config.json") : undefined);
+  const rootEnvPath = join(PROJECT_ROOT, ".env");
+  const envPath = isProfile ? join(PROJECT_ROOT, "profiles", profileName, ".env") : rootEnvPath;
+  // If isolated .env doesn't exist, fallback to reading root env
+  let env = existsSync(envPath) ? readEnvFile(envPath) : readEnvFile(rootEnvPath);
 
   // Migrate tokens from config.json → .env
-  const configPath = join(PROJECT_ROOT, "config.json");
+  const configPath = isProfile ? join(PROJECT_ROOT, "profiles", profileName, "config.json") : join(PROJECT_ROOT, "config.json");
   let configDirty = false;
   const rawConfig = (() => {
     try {
@@ -99,9 +108,9 @@ async function main(): Promise<void> {
   mkdirSync(join(MEMORY_DIR, "daily"), { recursive: true });
   mkdirSync(SKILLS_DIR, { recursive: true });
 
-  // Initialize database
+  mkdirSync(STORE_DIR, { recursive: true });
   const db = initDatabase(join(STORE_DIR, "second-brain.db"));
-  logger.info("Database initialized");
+  logger.info({ dbPath: join(STORE_DIR, "second-brain.db") }, "Database initialized");
 
   // Memory decay sweep
   if (config.memory.mode === "full") {

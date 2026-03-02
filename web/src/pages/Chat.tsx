@@ -3,6 +3,15 @@ import { ChatMessage } from "@/components/ChatMessage";
 import { MessageInput } from "@/components/MessageInput";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { DashboardStats } from "@/components/dashboard/DashboardStats";
+
+const mockStats = {
+  totalSessions: 142,
+  activeSessions: 3,
+  totalMessages: 8432,
+  uptime: "4d 12h",
+  errors: 0,
+};
 
 export default function Chat() {
   const { messages, status, isTyping, sendMessage } = useWebSocket();
@@ -21,10 +30,11 @@ export default function Chat() {
       )}
       <ScrollArea className="flex-1 p-4">
         {messages.length === 0 && !isTyping && (
-          <div className="flex items-center justify-center h-full text-muted-foreground">
+          <div className="flex flex-col items-center justify-center min-h-[60vh] gap-12 w-full mt-4">
+            <DashboardStats stats={mockStats} />
             <div className="text-center">
-              <p className="text-lg font-medium">Hello, I'm Clio</p>
-              <p className="text-sm mt-1">
+              <p className="text-2xl font-semibold text-foreground">Hello, I'm Clio</p>
+              <p className="text-sm text-muted-foreground mt-2">
                 Your personal AI assistant. Send me a message to get started.
               </p>
             </div>

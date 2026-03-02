@@ -6,8 +6,15 @@ export type WSServerMessage =
 
 export type WSStatus = "connecting" | "connected" | "disconnected";
 
+export interface MediaRef {
+  type: "image" | "audio" | "document";
+  path: string;
+  mimeType: string;
+  originalName?: string;
+}
+
 export interface WSClient {
-  send(text: string): void;
+  send(text: string, media?: MediaRef[]): void;
   onMessage(handler: (msg: WSServerMessage) => void): () => void;
   onStatusChange(handler: (status: WSStatus) => void): () => void;
   connect(): void;
@@ -70,9 +77,13 @@ export function createWSClient(url: string): WSClient {
   }
 
   return {
-    send(text: string) {
+    send(text: string, media?: MediaRef[]) {
       if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "message", text }));
+        const msg: Record<string, unknown> = { type: "message", text };
+        if (media?.length) {
+          msg.media = media;
+        }
+        ws.send(JSON.stringify(msg));
       }
     },
     onMessage(handler) {
