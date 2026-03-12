@@ -166,6 +166,7 @@ async function main(): Promise<void> {
     memoryMode: config.memory.mode,
     router,
     availableProviders: Object.keys(providers),
+    appConfig: config,
   });
 
   // Start all configured channels

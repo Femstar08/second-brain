@@ -14,7 +14,7 @@ import {
   readEnvFile,
 } from "../env.js";
 import { logger } from "../logger.js";
-import { saveMedia } from "../media/store.js";
+import { saveMediaFile } from "../media/store/local.js";
 import type { MediaAttachment, MediaType } from "../media/types.js";
 import type { ChannelAdapter, MessageHandler } from "./adapter.js";
 
@@ -140,7 +140,7 @@ export function setupApiRoutes(app: Hono, deps: WebAppDeps): void {
 
     const ext = extname(file.name) || ".bin";
     const buffer = Buffer.from(await file.arrayBuffer());
-    const path = saveMedia(buffer, ext);
+    const path = saveMediaFile(buffer, ext);
     const mimeType = file.type || "application/octet-stream";
 
     const type: MediaType = mimeType.startsWith("image/")
