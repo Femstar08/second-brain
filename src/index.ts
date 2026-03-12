@@ -1,6 +1,7 @@
 // src/index.ts
 import { writeFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import type { ChannelAdapter } from "./channels/adapter.js";
 import { createCLIAdapter } from "./channels/cli.js";
 import { createWebAdapter } from "./channels/web.js";
 import { PROJECT_ROOT, STORE_DIR, MEMORY_DIR, SKILLS_DIR, loadConfig } from "./config.js";
@@ -26,43 +27,52 @@ import type { Provider } from "./providers/types.js";
 import { loadSkills } from "./skills/loader.js";
 import { matchSkills, buildSkillContext } from "./skills/registry.js";
 
-const PID_FILE = join(STORE_DIR, "second-brain.pid");
+const PROFILE_LOCK_NAME = `second-brain${process.argv.includes("--profile") ? "-" + process.argv[process.argv.indexOf("--profile") + 1] : ""
+  }.pid`;
 
 function acquireLock(): void {
+  const pidPath = join(STORE_DIR, PROFILE_LOCK_NAME);
   mkdirSync(STORE_DIR, { recursive: true });
 
-  if (existsSync(PID_FILE)) {
-    const oldPid = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
+  if (existsSync(pidPath)) {
+    const oldPid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
     try {
-      process.kill(oldPid, 0); // check if alive
-      process.kill(oldPid, "SIGTERM");
-      logger.info({ oldPid }, "Killed previous instance");
+      if (oldPid !== process.pid) {
+        process.kill(oldPid, 0); // check if alive
+        process.kill(oldPid, "SIGTERM");
+        logger.info({ oldPid }, "Killed previous instance");
+      }
     } catch {
       // stale PID file
     }
   }
-  writeFileSync(PID_FILE, String(process.pid));
+  writeFileSync(pidPath, String(process.pid));
 }
 
 function releaseLock(): void {
   try {
-    unlinkSync(PID_FILE);
+    const pidPath = join(STORE_DIR, PROFILE_LOCK_NAME);
+    unlinkSync(pidPath);
   } catch {
     /* ignore */
   }
 }
 
 async function main(): Promise<void> {
-  console.log("\n  Second Brain\n");
+  const isProfile = process.argv.includes("--profile");
+  const profileName = isProfile ? process.argv[process.argv.indexOf("--profile") + 1] : "default";
+  console.log(`\n  Second Brain [Profile: ${profileName}]\n`);
 
   acquireLock();
 
-  const config = loadConfig();
-  const envPath = join(PROJECT_ROOT, ".env");
-  let env = readEnvFile(envPath);
+  const config = loadConfig(isProfile ? join(PROJECT_ROOT, "profiles", profileName, "config.json") : undefined);
+  const rootEnvPath = join(PROJECT_ROOT, ".env");
+  const envPath = isProfile ? join(PROJECT_ROOT, "profiles", profileName, ".env") : rootEnvPath;
+  // If isolated .env doesn't exist, fallback to reading root env
+  let env = existsSync(envPath) ? readEnvFile(envPath) : readEnvFile(rootEnvPath);
 
   // Migrate tokens from config.json → .env
-  const configPath = join(PROJECT_ROOT, "config.json");
+  const configPath = isProfile ? join(PROJECT_ROOT, "profiles", profileName, "config.json") : join(PROJECT_ROOT, "config.json");
   let configDirty = false;
   const rawConfig = (() => {
     try {
@@ -98,9 +108,9 @@ async function main(): Promise<void> {
   mkdirSync(join(MEMORY_DIR, "daily"), { recursive: true });
   mkdirSync(SKILLS_DIR, { recursive: true });
 
-  // Initialize database
+  mkdirSync(STORE_DIR, { recursive: true });
   const db = initDatabase(join(STORE_DIR, "second-brain.db"));
-  logger.info("Database initialized");
+  logger.info({ dbPath: join(STORE_DIR, "second-brain.db") }, "Database initialized");
 
   // Memory decay sweep
   if (config.memory.mode === "full") {
@@ -156,31 +166,37 @@ async function main(): Promise<void> {
     memoryMode: config.memory.mode,
     router,
     availableProviders: Object.keys(providers),
+    appConfig: config,
   });
 
-  // Determine channel
-  const channelName = config.channels.active;
-  let channelAdapter;
+  // Start all configured channels
+  const adapters: ChannelAdapter[] = [];
 
-  if (channelName === "web") {
-    channelAdapter = createWebAdapter({
+  // Web — always start (serves UI + API)
+  adapters.push(
+    createWebAdapter({
       port: config.channels.web.port,
       host: config.channels.web.host,
       onMessage: (msg) => agent.handleMessage(msg),
-    });
-  } else if (channelName === "telegram") {
-    const token = env.TELEGRAM_BOT_TOKEN ?? config.channels.telegram.botToken;
-    if (!token) {
-      logger.error("TELEGRAM_BOT_TOKEN not set. Set it in .env or config.json");
-      process.exit(1);
-    }
+    }),
+  );
+
+  // Telegram — start if token is available
+  const telegramToken = env.TELEGRAM_BOT_TOKEN ?? config.channels.telegram.botToken;
+  if (telegramToken) {
     const allowedIds = (env.TELEGRAM_ALLOWED_CHAT_IDS ?? "").split(",").filter(Boolean);
     const { createTelegramAdapter } = await import("./channels/telegram.js");
-    channelAdapter = createTelegramAdapter(token, allowedIds, (msg) => agent.handleMessage(msg));
-  } else {
-    // Default: CLI
-    channelAdapter = createCLIAdapter((msg) => agent.handleMessage(msg));
+    adapters.push(
+      createTelegramAdapter(telegramToken, allowedIds, (msg) => agent.handleMessage(msg)),
+    );
   }
+
+  // CLI — start if no other interactive channels, or if explicitly requested
+  if (adapters.length === 0) {
+    adapters.push(createCLIAdapter((msg) => agent.handleMessage(msg)));
+  }
+
+  logger.info({ channels: adapters.map((a) => a.id) }, "Channels configured");
 
   // Start heartbeat scheduler
   if (config.heartbeat.enabled) {
@@ -206,7 +222,7 @@ async function main(): Promise<void> {
         return result.text;
       },
       async (chatId, text) => {
-        await channelAdapter.send(chatId, text);
+        await Promise.all(adapters.map((a) => a.send(chatId, text)));
       },
     );
     logger.info("Scheduler started");
@@ -215,7 +231,7 @@ async function main(): Promise<void> {
   // Graceful shutdown
   const shutdown = () => {
     logger.info("Shutting down...");
-    void channelAdapter.stop();
+    for (const a of adapters) void a.stop();
     db.close();
     releaseLock();
     process.exit(0);
@@ -223,8 +239,8 @@ async function main(): Promise<void> {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  // Start channel
-  await channelAdapter.start();
+  // Start all channels
+  await Promise.all(adapters.map((a) => a.start()));
 }
 
 main().catch((err) => {

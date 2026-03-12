@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { logger } from "../logger.js";
 import type { Provider, ProviderResult, ConversationContext } from "./types.js";
 
@@ -12,13 +13,23 @@ export function createOllamaProvider(model: string, baseUrl = "http://localhost:
         .filter(Boolean)
         .join("\n\n");
 
+      // Build images array for vision models
+      const images = context.media
+        ?.filter((m) => m.type === "image")
+        .map((m) => readFileSync(m.path).toString("base64"));
+
+      const userMessage: Record<string, unknown> = { role: "user", content: prompt };
+      if (images?.length) {
+        userMessage.images = images;
+      }
+
       const body = {
         model,
         stream: false,
         messages: [
           ...(systemContent ? [{ role: "system", content: systemContent }] : []),
           ...messages,
-          { role: "user", content: prompt },
+          userMessage,
         ],
       };
 
@@ -37,6 +48,7 @@ export function createOllamaProvider(model: string, baseUrl = "http://localhost:
       const data = (await res.json()) as { message: { content: string } };
       const responseText = data.message?.content ?? "";
 
+      // Store text-only in history
       messages.push({ role: "user", content: prompt });
       messages.push({ role: "assistant", content: responseText });
       history.set(context.chatId, messages);

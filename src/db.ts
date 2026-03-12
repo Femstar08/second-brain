@@ -1,4 +1,5 @@
 import BetterSqlite3 from "better-sqlite3";
+import { initMediaSchema } from "./media/store/schema.js";
 
 export type Database = BetterSqlite3.Database;
 
@@ -59,6 +60,8 @@ export function initDatabase(dbPath: string): Database {
 
     CREATE INDEX IF NOT EXISTS idx_tasks_due ON scheduled_tasks(status, next_run);
   `);
+
+  initMediaSchema(db);
 
   return db;
 }

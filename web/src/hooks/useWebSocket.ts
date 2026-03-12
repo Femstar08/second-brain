@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { createWSClient, type WSServerMessage, type WSStatus } from "@/lib/ws-client";
+import { createWSClient, type MediaRef, type WSServerMessage, type WSStatus } from "@/lib/ws-client";
 
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
   timestamp: number;
+  media?: MediaRef[];
 }
 
 export function useWebSocket() {
@@ -58,7 +59,7 @@ export function useWebSocket() {
     };
   }, []);
 
-  const sendMessage = useCallback((text: string) => {
+  const sendMessage = useCallback((text: string, media?: MediaRef[]) => {
     setMessages((prev) => [
       ...prev,
       {
@@ -66,9 +67,10 @@ export function useWebSocket() {
         role: "user",
         text,
         timestamp: Date.now(),
+        media,
       },
     ]);
-    clientRef.current?.send(text);
+    clientRef.current?.send(text, media);
   }, []);
 
   return { messages, status, isTyping, sendMessage };

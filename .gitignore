@@ -1,7 +1,7 @@
 node_modules/
 dist/
 .env
-store/
+/store/
 workspace/
 *.log
 *.pid
@@ -11,3 +11,5 @@ config.json
 memory/user.md
 memory/memory.md
 memory/daily/*.md
+.superpowers/
+.worktrees/

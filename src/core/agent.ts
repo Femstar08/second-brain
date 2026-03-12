@@ -1,6 +1,9 @@
 import type { Database } from "../db.js";
 import { clearSession, getSession, setSession } from "../db.js";
 import { logger } from "../logger.js";
+import { ingestMedia, buildMediaFallback } from "../media/ingest/index.js";
+import { saveMediaRecord } from "../media/store/index.js";
+import type { MediaAttachment } from "../media/types.js";
 import { loadAlwaysContext, appendDailyLog } from "../memory/index.js";
 import { buildMemoryContext, saveConversationTurn } from "../memory/search.js";
 import type { Router } from "../providers/router.js";
@@ -11,7 +14,7 @@ export interface InboundMessage {
   text: string;
   senderId: string;
   platform: string;
-  mediaPath?: string;
+  media?: MediaAttachment[];
   replyToId?: string;
 }
 
@@ -23,6 +26,7 @@ export interface AgentConfig {
   skillContext?: string;
   router?: Router;
   availableProviders?: string[];
+  appConfig?: import("../config.js").SecondBrainConfig;
 }
 
 export interface Agent {
@@ -51,31 +55,82 @@ export function createAgent(config: AgentConfig): Agent {
       const searchContext =
         memoryMode === "full" ? buildMemoryContext(db, msg.chatId, msg.text) : "";
 
-      const memoryContext = [alwaysContext, searchContext].filter(Boolean).join("\n\n");
+      // Build media context if relevant keywords detected
+      const mediaSearchTerms = ["find", "photo", "image", "video", "document", "article", "that", "remember"];
+      const hasMediaQuery = mediaSearchTerms.some(term => msg.text.toLowerCase().includes(term));
+      let mediaContext = "";
+      if (hasMediaQuery && config.appConfig) {
+        const { searchMedia } = await import("../media/store/index.js");
+        // Search by message text
+        const results = searchMedia(db, msg.text).slice(0, 5);
+        if (results.length > 0) {
+          mediaContext = "\n\n[Media search results]:\n" + results.map(r =>
+            `- ${r.type} (${r.createdAt}): ${r.description?.slice(0, 100) ?? "no description"}${r.path ? ` [${r.path}]` : " [archived]"}`
+          ).join("\n");
+        }
+      }
 
-      // 2. Get existing session for this chat+provider pair
+      const memoryContextFull = [alwaysContext, searchContext, mediaContext].filter(Boolean).join("\n\n");
+
+      // 2. Ingest media through new pipeline
+      let media = msg.media;
+      if (media?.length && config.appConfig) {
+        const processed = await Promise.all(
+          media.map(async (a) => {
+            const result = await ingestMedia(a, config.appConfig!);
+            // Enrich attachment with processed data
+            if (result.extractedText && a.type === "audio") a.transcription = result.extractedText;
+            if (result.extractedText && a.type === "document") a.extractedText = result.extractedText;
+            // Persist to media store
+            saveMediaRecord(db, {
+              type: a.type,
+              source: "inbound",
+              path: a.path,
+              mimeType: a.mimeType,
+              description: result.description,
+              chatId: msg.chatId,
+              tags: [],
+            });
+            return result;
+          }),
+        );
+        // Log any processing errors
+        for (const p of processed) {
+          if (p.error) logger.warn({ type: p.type, error: p.error }, "Media processing partial failure");
+        }
+      }
+
+      // 3. Build prompt — prepend media fallback text for non-vision providers
+      let prompt = msg.text;
+      if (media?.length) {
+        const fallback = buildMediaFallback(media);
+        prompt = fallback + (prompt ? `\n\n${prompt}` : "");
+      }
+
+      // 4. Get existing session for this chat+provider pair
       const sessionId = getSession(db, msg.chatId, provider.id) ?? undefined;
 
-      // 3. Send to provider with full context
-      const result = await provider.send(msg.text, {
+      // 5. Send to provider with full context
+      const result = await provider.send(prompt, {
         chatId: msg.chatId,
         sessionId,
-        memoryContext,
+        memoryContext: memoryContextFull,
         skillContext: config.skillContext,
+        media,
       });
 
-      // 4. Save session if the provider returned one
+      // 6. Save session if the provider returned one
       if (result.sessionId) {
         setSession(db, msg.chatId, provider.id, result.sessionId);
       }
 
-      // 5. Save to daily log (simple + full modes)
+      // 7. Save to daily log (simple + full modes)
       if (memoryMode !== "none") {
         appendDailyLog(memoryDir, "user", msg.text);
         appendDailyLog(memoryDir, "assistant", result.text);
       }
 
-      // 6. Save to FTS memory (full mode only)
+      // 8. Save to FTS memory (full mode only)
       if (memoryMode === "full") {
         saveConversationTurn(db, msg.chatId, msg.text, result.text);
       }

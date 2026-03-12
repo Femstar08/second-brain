@@ -18,6 +18,15 @@ describe("loadConfig", () => {
     expect(cfg.memory.mode).toBe("full");
   });
 
+  it("returns media defaults when no media config provided", () => {
+    const cfg = loadConfig(join(tmpDir, "nope.json"));
+    expect(cfg.media.ingest.visionProvider).toBe("claude");
+    expect(cfg.media.ingest.transcriptionProvider).toBe("whisper-local");
+    expect(cfg.media.generate.imageProvider).toBe("dall-e");
+    expect(cfg.media.generate.ttsProvider).toBe("gtts");
+    expect(cfg.media.store.archiveDays).toBe(7);
+  });
+
   it("merges user config over defaults", () => {
     mkdirSync(tmpDir, { recursive: true });
     const cfgPath = join(tmpDir, "config.json");

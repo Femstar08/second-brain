@@ -1,8 +1,11 @@
+import type { MediaAttachment } from "../media/types.js";
+
 export interface ConversationContext {
   sessionId?: string;
   memoryContext?: string;
   skillContext?: string;
   chatId: string;
+  media?: MediaAttachment[];
 }
 
 export interface ProviderResult {
