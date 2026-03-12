@@ -9,7 +9,9 @@ Separate git clone. The production instance lives at `~/clio` (configurable via 
 ## Current State
 
 - Clio runs directly from the development repo (`~/Projects/second-brain`)
-- Runtime state (`store/`, `memory/`, `skills/`, `.env`, `config.json`) is already gitignored
+- Runtime state (`store/`, `.env`, `config.json`) is already gitignored
+- `memory/` is partially gitignored — `user.md`, `memory.md`, `daily/*.md` are excluded but `agent.md`, `soul.md`, `knowledge/`, `preferences/` are tracked
+- `skills/` is version-controlled (not gitignored) — runtime skill additions are possible but rare
 - All paths resolve relative to `PROJECT_ROOT` via `import.meta.url` — no hardcoded absolute paths
 - Build step exists: `npm run build` compiles TypeScript to `dist/`
 - PID-based lock file prevents duplicate instances
@@ -54,15 +56,33 @@ echo "Deploying to $CLIO_HOME..."
 
 cd "$CLIO_HOME"
 
+# Preserve runtime memory files that git would overwrite
+STASH_DIR=$(mktemp -d)
+for f in memory/soul.md memory/agent.md; do
+  if [ -f "$f" ]; then
+    cp "$f" "$STASH_DIR/$(basename $f)"
+  fi
+done
+
 # Pull latest from origin/dev
-git fetch origin dev
+git fetch origin dev || { echo "Error: git fetch failed. Check network/remote."; exit 1; }
 git reset --hard origin/dev
 
-# Install production dependencies
-npm install --omit=dev
+# Restore runtime memory files
+for f in "$STASH_DIR"/*; do
+  [ -f "$f" ] && cp "$f" "memory/$(basename $f)"
+done
+rm -rf "$STASH_DIR"
+
+# Install all dependencies (devDeps needed for build)
+npm install
+(cd web && npm install)
 
 # Build TypeScript + web frontend
 npm run build
+
+# Prune devDependencies after build
+npm prune --omit=dev
 
 # Restart via launchd
 launchctl kickstart -k "gui/$(id -u)/com.clio.second-brain" 2>/dev/null \
@@ -73,7 +93,8 @@ launchctl kickstart -k "gui/$(id -u)/com.clio.second-brain" 2>/dev/null \
 ### Deploy behavior
 
 - `git reset --hard origin/dev` — production clone should never have local modifications. It always matches exactly what's on `origin/dev`.
-- `npm install --omit=dev` — skip test/dev dependencies in production.
+- **Stash/restore** — runtime memory files (`soul.md`, `agent.md`) that are tracked in git but modified at runtime are preserved across deploys.
+- **Full install → build → prune** — devDependencies (TypeScript, Vite) are needed during build but pruned afterward. Both root and `web/` dependencies are installed.
 - `launchctl kickstart -k` — restart the launchd service in one command. Falls back to manual instruction if launchd isn't configured.
 
 ## Process Management (launchd)
@@ -109,7 +130,7 @@ A macOS LaunchAgent plist at `~/Library/LaunchAgents/com.clio.second-brain.plist
     <key>NODE_ENV</key>
     <string>production</string>
     <key>PATH</key>
-    <string>/usr/local/bin:/usr/bin:/bin</string>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
 
   <key>RunAtLoad</key>
@@ -183,10 +204,14 @@ done
 
 # Step 3: Build
 echo "Installing dependencies..."
-npm install --omit=dev
+npm install
+(cd web && npm install)
 
 echo "Building..."
 npm run build
+
+echo "Pruning dev dependencies..."
+npm prune --omit=dev
 
 # Step 4: Create logs directory
 mkdir -p "$CLIO_HOME/logs"
@@ -206,8 +231,9 @@ else
 fi
 
 # Step 6: Load and start
-launchctl load "$PLIST_DST" 2>/dev/null || true
-launchctl start com.clio.second-brain
+# Unload first if already loaded (idempotent)
+launchctl bootout "gui/$(id -u)/com.clio.second-brain" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$PLIST_DST"
 
 echo ""
 echo "=== Setup Complete ==="
@@ -240,6 +266,14 @@ The user should clean runtime state from the dev repo if desired (optional — g
 
 No application code changes required.
 
+## Memory Files and Deploy Safety
+
+Some `memory/` files are tracked in git (`agent.md`, `soul.md`) but also written to at runtime by the agent. The deploy script stashes these before `git reset --hard` and restores them after, so Clio's runtime memories survive deploys.
+
+Files that are fully gitignored (`user.md`, `memory.md`, `daily/`) are untouched by `git reset --hard` and need no special handling.
+
+`skills/` is version-controlled — skill definitions ship with the code. If a skill is added at runtime (rare), it would be overwritten on deploy. This is acceptable since skill changes should go through the dev repo.
+
 ## Update Workflow (Day-to-Day)
 
 1. Develop in `~/Projects/second-brain` on feature branches
@@ -255,8 +289,9 @@ If a deploy breaks Clio:
 cd ~/clio
 git log --oneline -5          # find the last good commit
 git reset --hard <commit>
-npm install --omit=dev
+npm install && (cd web && npm install)
 npm run build
+npm prune --omit=dev
 launchctl kickstart -k "gui/$(id -u)/com.clio.second-brain"
 ```
 
