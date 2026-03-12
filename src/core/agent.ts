@@ -1,7 +1,8 @@
 import type { Database } from "../db.js";
 import { clearSession, getSession, setSession } from "../db.js";
 import { logger } from "../logger.js";
-import { preprocessMedia, buildMediaFallback } from "../media/processor.js";
+import { ingestMedia, buildMediaFallback } from "../media/ingest/index.js";
+import { saveMediaRecord } from "../media/store/index.js";
 import type { MediaAttachment } from "../media/types.js";
 import { loadAlwaysContext, appendDailyLog } from "../memory/index.js";
 import { buildMemoryContext, saveConversationTurn } from "../memory/search.js";
@@ -25,6 +26,7 @@ export interface AgentConfig {
   skillContext?: string;
   router?: Router;
   availableProviders?: string[];
+  appConfig?: import("../config.js").SecondBrainConfig;
 }
 
 export interface Agent {
@@ -55,8 +57,33 @@ export function createAgent(config: AgentConfig): Agent {
 
       const memoryContext = [alwaysContext, searchContext].filter(Boolean).join("\n\n");
 
-      // 2. Preprocess media attachments (transcribe audio, extract doc text)
-      const media = msg.media ? preprocessMedia(msg.media) : undefined;
+      // 2. Ingest media through new pipeline
+      let media = msg.media;
+      if (media?.length && config.appConfig) {
+        const processed = await Promise.all(
+          media.map(async (a) => {
+            const result = await ingestMedia(a, config.appConfig!);
+            // Enrich attachment with processed data
+            if (result.extractedText && a.type === "audio") a.transcription = result.extractedText;
+            if (result.extractedText && a.type === "document") a.extractedText = result.extractedText;
+            // Persist to media store
+            saveMediaRecord(db, {
+              type: a.type,
+              source: "inbound",
+              path: a.path,
+              mimeType: a.mimeType,
+              description: result.description,
+              chatId: msg.chatId,
+              tags: [],
+            });
+            return result;
+          }),
+        );
+        // Log any processing errors
+        for (const p of processed) {
+          if (p.error) logger.warn({ type: p.type, error: p.error }, "Media processing partial failure");
+        }
+      }
 
       // 3. Build prompt — prepend media fallback text for non-vision providers
       let prompt = msg.text;
