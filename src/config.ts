@@ -1,6 +1,9 @@
 import { readFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ConfigSchema } from "./config/schema.js";
+
+export type { SecondBrainConfig } from "./config/schema.js";
 
 // Get root
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -13,7 +16,7 @@ export let SKILLS_DIR = join(ROOT, "skills");
 
 /**
  * Configure dynamic profile paths to isolate the instance data.
- * Used for building a team of narrow agents. 
+ * Used for building a team of narrow agents.
  */
 export function setProfile(profileName: string): void {
   const profileDir = join(ROOT, "profiles", profileName);
@@ -30,102 +33,7 @@ if (profileArgIndex !== -1 && process.argv.length > profileArgIndex + 1) {
   setProfile(profileName);
 }
 
-export interface MediaConfig {
-  ingest: {
-    visionProvider: "claude" | "openai";
-    transcriptionProvider: "whisper-local" | "whisper-api" | "deepgram";
-    videoKeyframeInterval: number;
-  };
-  generate: {
-    imageProvider: "dall-e" | "flux" | "nanobanana";
-    ttsProvider: "gtts" | "openai" | "elevenlabs" | "off";
-    ttsVoice: string;
-  };
-  store: {
-    archiveDays: number;
-    localRetentionDays: number;
-    archiveDeleteLocal: boolean;
-    driveFolderName: string;
-    driveAccount: "personal" | "business";
-  };
-}
-
-export interface SecondBrainConfig {
-  provider: string;
-  onboarded: boolean;
-  providers: {
-    claude: Record<string, unknown>;
-    codex: Record<string, unknown>;
-    openai: { apiKey?: string; model?: string };
-    openrouter: { apiKey?: string; model?: string };
-    ollama: { model?: string; baseUrl?: string };
-  };
-  channels: {
-    active?: string; // deprecated — all configured channels start automatically
-    web: { port: number; host: string };
-    telegram: { botToken?: string; allowedChatIds?: string[] };
-    slack: { botToken?: string; appToken?: string; allowedUserIds?: string[] };
-    discord: { botToken?: string; allowedUserIds?: string[] };
-  };
-  heartbeat: {
-    enabled: boolean;
-    intervalMinutes: number;
-    activeHours: { start: string; end: string };
-  };
-  memory: {
-    mode: "full" | "simple" | "none";
-    embeddings: { enabled: boolean; provider: string };
-  };
-  media: MediaConfig;
-}
-
-const DEFAULTS: SecondBrainConfig = {
-  provider: "claude",
-  onboarded: false,
-  providers: {
-    claude: {},
-    codex: {},
-    openai: { model: "gpt-4o" },
-    openrouter: { model: "anthropic/claude-sonnet-4-6" },
-    ollama: { model: "llama3.1", baseUrl: "http://localhost:11434" },
-  },
-  channels: {
-    web: { port: 3000, host: "localhost" },
-    telegram: {},
-    slack: {},
-    discord: {},
-  },
-  heartbeat: {
-    enabled: true,
-    intervalMinutes: 30,
-    activeHours: { start: "08:00", end: "22:00" },
-  },
-  memory: {
-    mode: "full",
-    embeddings: { enabled: false, provider: "openai" },
-  },
-  media: {
-    ingest: {
-      visionProvider: "claude",
-      transcriptionProvider: "whisper-local",
-      videoKeyframeInterval: 5,
-    },
-    generate: {
-      imageProvider: "dall-e",
-      ttsProvider: "gtts",
-      ttsVoice: "onyx",
-    },
-    store: {
-      archiveDays: 7,
-      localRetentionDays: 30,
-      archiveDeleteLocal: false,
-      driveFolderName: "second-brain-media",
-      driveAccount: "personal",
-    },
-  },
-};
-
-export function loadConfig(configPath?: string): SecondBrainConfig {
+export function loadConfig(configPath?: string) {
   const path = configPath ?? join(PROJECT_ROOT, "config.json");
   let userConfig: Record<string, unknown> = {};
   try {
@@ -133,33 +41,5 @@ export function loadConfig(configPath?: string): SecondBrainConfig {
   } catch {
     // no config file -- use defaults
   }
-  return deepMerge(
-    DEFAULTS as unknown as Record<string, unknown>,
-    userConfig,
-  ) as unknown as SecondBrainConfig;
-}
-
-function deepMerge(
-  target: Record<string, unknown>,
-  source: Record<string, unknown>,
-): Record<string, unknown> {
-  const result = { ...target };
-  for (const key of Object.keys(source)) {
-    if (
-      source[key] &&
-      typeof source[key] === "object" &&
-      !Array.isArray(source[key]) &&
-      target[key] &&
-      typeof target[key] === "object" &&
-      !Array.isArray(target[key])
-    ) {
-      result[key] = deepMerge(
-        target[key] as Record<string, unknown>,
-        source[key] as Record<string, unknown>,
-      );
-    } else {
-      result[key] = source[key];
-    }
-  }
-  return result;
+  return ConfigSchema.parse(userConfig);
 }

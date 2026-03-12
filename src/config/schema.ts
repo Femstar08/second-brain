@@ -65,6 +65,32 @@ export const ConfigSchema = z.object({
             provider: z.string().default("openai"),
         }).default({ enabled: false, provider: "openai" }),
     }).default({ mode: "full", embeddings: { enabled: false, provider: "openai" } }),
+    media: z.object({
+        ingest: z.object({
+            visionProvider: z.enum(["claude", "openai"]).default("claude"),
+            transcriptionProvider: z.enum(["whisper-local", "whisper-api", "deepgram"]).default("whisper-local"),
+            videoKeyframeInterval: z.number().default(5),
+        }).default({ visionProvider: "claude", transcriptionProvider: "whisper-local", videoKeyframeInterval: 5 }),
+        generate: z.object({
+            imageProvider: z.enum(["dall-e", "flux", "nanobanana"]).default("dall-e"),
+            ttsProvider: z.enum(["gtts", "openai", "elevenlabs", "off"]).default("gtts"),
+            ttsVoice: z.string().default("onyx"),
+        }).default({ imageProvider: "dall-e", ttsProvider: "gtts", ttsVoice: "onyx" }),
+        store: z.object({
+            archiveDays: z.number().default(7),
+            localRetentionDays: z.number().default(30),
+            archiveDeleteLocal: z.boolean().default(false),
+            driveFolderName: z.string().default("second-brain-media"),
+            driveAccount: z.enum(["personal", "business"]).default("personal"),
+        }).default({
+            archiveDays: 7, localRetentionDays: 30, archiveDeleteLocal: false,
+            driveFolderName: "second-brain-media", driveAccount: "personal",
+        }),
+    }).default({
+        ingest: { visionProvider: "claude", transcriptionProvider: "whisper-local", videoKeyframeInterval: 5 },
+        generate: { imageProvider: "dall-e", ttsProvider: "gtts", ttsVoice: "onyx" },
+        store: { archiveDays: 7, localRetentionDays: 30, archiveDeleteLocal: false, driveFolderName: "second-brain-media", driveAccount: "personal" },
+    }),
 });
 
 export type SecondBrainConfig = z.infer<typeof ConfigSchema>;
