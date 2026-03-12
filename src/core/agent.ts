@@ -55,7 +55,22 @@ export function createAgent(config: AgentConfig): Agent {
       const searchContext =
         memoryMode === "full" ? buildMemoryContext(db, msg.chatId, msg.text) : "";
 
-      const memoryContext = [alwaysContext, searchContext].filter(Boolean).join("\n\n");
+      // Build media context if relevant keywords detected
+      const mediaSearchTerms = ["find", "photo", "image", "video", "document", "article", "that", "remember"];
+      const hasMediaQuery = mediaSearchTerms.some(term => msg.text.toLowerCase().includes(term));
+      let mediaContext = "";
+      if (hasMediaQuery && config.appConfig) {
+        const { searchMedia } = await import("../media/store/index.js");
+        // Search by message text
+        const results = searchMedia(db, msg.text).slice(0, 5);
+        if (results.length > 0) {
+          mediaContext = "\n\n[Media search results]:\n" + results.map(r =>
+            `- ${r.type} (${r.createdAt}): ${r.description?.slice(0, 100) ?? "no description"}${r.path ? ` [${r.path}]` : " [archived]"}`
+          ).join("\n");
+        }
+      }
+
+      const memoryContextFull = [alwaysContext, searchContext, mediaContext].filter(Boolean).join("\n\n");
 
       // 2. Ingest media through new pipeline
       let media = msg.media;
@@ -99,7 +114,7 @@ export function createAgent(config: AgentConfig): Agent {
       const result = await provider.send(prompt, {
         chatId: msg.chatId,
         sessionId,
-        memoryContext,
+        memoryContext: memoryContextFull,
         skillContext: config.skillContext,
         media,
       });
