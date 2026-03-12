@@ -39,7 +39,7 @@ describe("ingestAudio", () => {
 
   it("returns transcription from /tmp output file on success", async () => {
     mockExecSync.mockReturnValue("");
-    mockReadFileSync.mockReturnValue("Hello, this is a test transcription." as unknown as Buffer);
+    mockReadFileSync.mockReturnValue("Hello, this is a test transcription.");
 
     const result = await ingestAudio(makeAttachment());
 
@@ -87,7 +87,7 @@ describe("ingestAudio", () => {
 
   it("includes size in metadata when statSync succeeds", async () => {
     mockExecSync.mockReturnValue("");
-    mockReadFileSync.mockReturnValue("text" as unknown as Buffer);
+    mockReadFileSync.mockReturnValue("text");
 
     const result = await ingestAudio(makeAttachment());
 

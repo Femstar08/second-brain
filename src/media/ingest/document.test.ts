@@ -73,7 +73,7 @@ describe("ingestDocument", () => {
 
   describe("text/* files", () => {
     it("reads text file content directly", async () => {
-      mockReadFileSync.mockReturnValue("Plain text content." as unknown as Buffer);
+      mockReadFileSync.mockReturnValue("Plain text content.");
 
       const result = await ingestDocument(makeTextAttachment());
 
@@ -94,7 +94,7 @@ describe("ingestDocument", () => {
     });
 
     it("handles text/markdown mime type", async () => {
-      mockReadFileSync.mockReturnValue("# Heading" as unknown as Buffer);
+      mockReadFileSync.mockReturnValue("# Heading");
 
       const result = await ingestDocument(makeTextAttachment({ mimeType: "text/markdown" }));
 
