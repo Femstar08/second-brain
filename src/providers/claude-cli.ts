@@ -34,7 +34,7 @@ export function createClaudeProvider(): Provider {
             ...(context.sessionId ? { resume: context.sessionId } : {}),
             permissionMode: "bypassPermissions",
             allowDangerouslySkipPermissions: true,
-            settingSources: ["project", "user"],
+            settingSources: ["project"],
           },
         });
 
