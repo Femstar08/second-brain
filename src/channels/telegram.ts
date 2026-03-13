@@ -130,8 +130,11 @@ export function createTelegramAdapter(
       }
     } catch (err) {
       clearInterval(typingInterval);
+      const detail = err instanceof Error ? err.message : String(err);
       logger.error({ err, chatId }, "Telegram message handler error");
-      await ctx.reply("Something went wrong processing your message.");
+      await ctx.reply(
+        `⚠️ Something went wrong: ${detail}\n\nTry again or rephrase your message.`,
+      ).catch(() => {});
     }
   }
 

@@ -38,6 +38,20 @@ export function createAgent(config: AgentConfig): Agent {
 
   return {
     async handleMessage(msg: InboundMessage): Promise<ProviderResult> {
+      try {
+        return await processMessage(msg, config);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        logger.error({ err, chatId: msg.chatId }, "Unhandled error in message handler");
+        return { text: `Something went wrong: ${detail}\n\nTry again or rephrase your message.` };
+      }
+    },
+  };
+}
+
+async function processMessage(msg: InboundMessage, config: AgentConfig): Promise<ProviderResult> {
+  const { provider, db, memoryDir, memoryMode } = config;
+
       // Handle /provider command
       if (msg.text.startsWith("/provider")) {
         return handleProviderCommand(msg.text, config);
@@ -161,8 +175,6 @@ export function createAgent(config: AgentConfig): Agent {
       }
 
       return result;
-    },
-  };
 }
 
 function handleProviderCommand(text: string, config: AgentConfig): ProviderResult {

@@ -211,8 +211,9 @@ export function createWebAdapter(options: WebAdapterOptions): ChannelAdapter {
 
           ws.send(JSON.stringify({ type: "response", text: result.text, done: true }));
         } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
           logger.error({ err }, "WebSocket message error");
-          ws.send(JSON.stringify({ type: "error", message: "Failed to process message" }));
+          ws.send(JSON.stringify({ type: "error", message: `Failed to process message: ${detail}` }));
         }
       },
     })),
