@@ -17,6 +17,7 @@ import {
 import { startSchedulerLoop, createScheduledTask } from "./heartbeat/scheduler.js";
 import { logger } from "./logger.js";
 import { runDecaySweep } from "./memory/search.js";
+import { createAnthropicProvider } from "./providers/anthropic.js";
 import { createClaudeProvider } from "./providers/claude-cli.js";
 import { createCodexProvider } from "./providers/codex-cli.js";
 import { createOllamaProvider } from "./providers/ollama.js";
@@ -120,6 +121,15 @@ async function main(): Promise<void> {
 
   // Build providers
   const providers: Record<string, Provider> = {};
+
+  const anthropicKey = env.ANTHROPIC_API_KEY ?? config.providers.anthropic.apiKey;
+  if (anthropicKey) {
+    providers.anthropic = createAnthropicProvider(
+      anthropicKey,
+      config.providers.anthropic.model ?? "claude-sonnet-4-6",
+    );
+  }
+
   providers.claude = createClaudeProvider();
   providers.codex = createCodexProvider();
 

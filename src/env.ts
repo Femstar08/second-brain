@@ -5,6 +5,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
  * Used for migration, masking, and stripping tokens from config responses.
  */
 export const SENSITIVE_TOKEN_MAP: Record<string, string[]> = {
+  ANTHROPIC_API_KEY: ["providers", "anthropic", "apiKey"],
   OPENAI_API_KEY: ["providers", "openai", "apiKey"],
   OPENROUTER_API_KEY: ["providers", "openrouter", "apiKey"],
   TELEGRAM_BOT_TOKEN: ["channels", "telegram", "botToken"],

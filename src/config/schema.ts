@@ -4,6 +4,10 @@ export const ConfigSchema = z.object({
     provider: z.string().default("claude"),
     onboarded: z.boolean().default(false),
     providers: z.object({
+        anthropic: z.object({
+            apiKey: z.string().optional(),
+            model: z.string().default("claude-sonnet-4-6"),
+        }).default({ model: "claude-sonnet-4-6" }),
         claude: z.record(z.string(), z.unknown()).default({}),
         codex: z.record(z.string(), z.unknown()).default({}),
         openai: z.object({
@@ -19,6 +23,7 @@ export const ConfigSchema = z.object({
             baseUrl: z.string().default("http://localhost:11434"),
         }).default({ model: "llama3.1", baseUrl: "http://localhost:11434" }),
     }).default({
+        anthropic: { model: "claude-sonnet-4-6" },
         claude: {},
         codex: {},
         openai: { model: "gpt-4o" },
