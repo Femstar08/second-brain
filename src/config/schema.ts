@@ -20,8 +20,8 @@ export const ConfigSchema = z.object({
         }).default({ model: "anthropic/claude-sonnet-4-6" }),
         ollama: z.object({
             model: z.string().default("llama3.1"),
-            baseUrl: z.string().default("http://localhost:11434"),
-        }).default({ model: "llama3.1", baseUrl: "http://localhost:11434" }),
+            baseUrl: z.string().default("http://127.0.0.1:11434"),
+        }).default({ model: "llama3.1", baseUrl: "http://127.0.0.1:11434" }),
     }).default({
         anthropic: { model: "claude-sonnet-4-6" },
         claude: {},
@@ -96,6 +96,48 @@ export const ConfigSchema = z.object({
         generate: { imageProvider: "dall-e", ttsProvider: "gtts", ttsVoice: "onyx" },
         store: { archiveDays: 7, localRetentionDays: 30, archiveDeleteLocal: false, driveFolderName: "second-brain-media", driveAccount: "personal" },
     }),
+    routing: z.object({
+        failover: z.array(z.string()).default(["anthropic", "openrouter", "openai", "ollama"]),
+        showRouteInfo: z.boolean().default(true),
+        smartRouting: z.boolean().default(true),
+        tiers: z.object({
+            quick: z.object({
+                provider: z.string().default("openrouter"),
+                model: z.string().default("google/gemini-flash-2.0"),
+            }).default({ provider: "openrouter", model: "google/gemini-flash-2.0" }),
+            standard: z.object({
+                provider: z.string().default(""),
+                model: z.string().default(""),
+            }).default({ provider: "", model: "" }),
+            heavy: z.object({
+                provider: z.string().default("anthropic"),
+                model: z.string().default("claude-sonnet-4-6"),
+            }).default({ provider: "anthropic", model: "claude-sonnet-4-6" }),
+            vision: z.object({
+                provider: z.string().default("anthropic"),
+                model: z.string().default("claude-sonnet-4-6"),
+            }).default({ provider: "anthropic", model: "claude-sonnet-4-6" }),
+        }).default({
+            quick: { provider: "openrouter", model: "google/gemini-flash-2.0" },
+            standard: { provider: "", model: "" },
+            heavy: { provider: "anthropic", model: "claude-sonnet-4-6" },
+            vision: { provider: "anthropic", model: "claude-sonnet-4-6" },
+        }),
+    }).default({
+        failover: ["anthropic", "openrouter", "openai", "ollama"],
+        showRouteInfo: true,
+        smartRouting: true,
+        tiers: {
+            quick: { provider: "openrouter", model: "google/gemini-flash-2.0" },
+            standard: { provider: "", model: "" },
+            heavy: { provider: "anthropic", model: "claude-sonnet-4-6" },
+            vision: { provider: "anthropic", model: "claude-sonnet-4-6" },
+        },
+    }),
+    agents: z.object({
+        enabled: z.boolean().default(false),
+        registryPath: z.string().default("agents/registry.json"),
+    }).default({ enabled: false, registryPath: "agents/registry.json" }),
 });
 
 export type SecondBrainConfig = z.infer<typeof ConfigSchema>;

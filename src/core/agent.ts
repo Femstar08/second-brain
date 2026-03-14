@@ -57,6 +57,11 @@ async function processMessage(msg: InboundMessage, config: AgentConfig): Promise
         return handleProviderCommand(msg.text, config);
       }
 
+      // Handle /model command
+      if (msg.text.startsWith("/model")) {
+        return handleModelCommand(msg.text, config);
+      }
+
       // Handle /newchat command
       if (msg.text.startsWith("/newchat")) {
         clearSession(db, msg.chatId);
@@ -158,6 +163,16 @@ async function processMessage(msg: InboundMessage, config: AgentConfig): Promise
         };
       }
 
+      // Append route info footer if enabled
+      if (result.routeInfo && config.appConfig?.routing?.showRouteInfo) {
+        const ri = result.routeInfo;
+        const via = ri.model ? `${ri.provider}/${ri.model}` : ri.provider;
+        const failoverNote = ri.failedOver
+          ? `, failed over from ${ri.attempts.slice(0, -1).join(" → ")}`
+          : "";
+        result = { ...result, text: `${result.text}\n\n[via ${via}${failoverNote}]` };
+      }
+
       // 6. Save session if the provider returned one
       if (result.sessionId) {
         setSession(db, msg.chatId, provider.id, result.sessionId);
@@ -175,6 +190,56 @@ async function processMessage(msg: InboundMessage, config: AgentConfig): Promise
       }
 
       return result;
+}
+
+// Preset models for quick switching — grouped by row
+const MODEL_PRESETS = [
+  { text: "Gemini Flash 2.0", id: "google/gemini-flash-2.0" },
+  { text: "Llama 3.1 8B", id: "meta-llama/llama-3.1-8b-instruct" },
+  { text: "Qwen 3.5 9B", id: "qwen/qwen3.5-9b" },
+  { text: "DeepSeek Chat", id: "deepseek/deepseek-chat" },
+  { text: "Claude Haiku", id: "anthropic/claude-haiku-4-5-20251001" },
+  { text: "Claude Sonnet", id: "anthropic/claude-sonnet-4-6" },
+  { text: "Liquid LFM2", id: "liquid/lfm-2-24b-a2b" },
+  { text: "Mistral Small", id: "mistralai/mistral-small-creative" },
+];
+
+function handleModelCommand(text: string, config: AgentConfig): ProviderResult {
+  const { router } = config;
+  const args = text.replace(/^\/model\s*/, "").trim();
+
+  if (!router) {
+    return { text: "Model switching not available." };
+  }
+
+  const current = router.currentModel();
+  const providerName = router.currentProvider();
+
+  // No argument — show picker with inline buttons
+  if (!args) {
+    const buttons = [];
+    for (let i = 0; i < MODEL_PRESETS.length; i += 2) {
+      const row = [MODEL_PRESETS[i]];
+      if (MODEL_PRESETS[i + 1]) row.push(MODEL_PRESETS[i + 1]);
+      buttons.push(row.map(m => ({
+        text: m.id === current ? `✓ ${m.text}` : m.text,
+        callbackData: `model:${m.id}`,
+      })));
+    }
+    return {
+      text: `Current model: ${current ?? "unknown"}\nPick a model:`,
+      buttons,
+    };
+  }
+
+  // Try to switch
+  const ok = router.setModel(args);
+  if (!ok) {
+    return { text: `Provider "${providerName}" doesn't support model switching.` };
+  }
+
+  logger.info({ model: args, provider: providerName }, "Switched model");
+  return { text: `Switched to ${args}` };
 }
 
 function handleProviderCommand(text: string, config: AgentConfig): ProviderResult {

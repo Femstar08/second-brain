@@ -43,6 +43,7 @@ const makeConfig = (): SecondBrainConfig => ({
   provider: "claude",
   onboarded: false,
   providers: {
+    anthropic: { model: "claude-sonnet-4-6" },
     claude: {},
     codex: {},
     openai: { model: "gpt-4o" },
@@ -82,6 +83,21 @@ const makeConfig = (): SecondBrainConfig => ({
       driveFolderName: "second-brain-media",
       driveAccount: "personal",
     },
+  },
+  routing: {
+    failover: ["anthropic", "openrouter", "openai", "ollama"],
+    showRouteInfo: true,
+    smartRouting: true,
+    tiers: {
+      quick: { provider: "openrouter", model: "google/gemini-flash-2.0" },
+      standard: { provider: "", model: "" },
+      heavy: { provider: "anthropic", model: "claude-sonnet-4-6" },
+      vision: { provider: "anthropic", model: "claude-sonnet-4-6" },
+    },
+  },
+  agents: {
+    enabled: false,
+    registryPath: "agents/registry.json",
   },
 });
 

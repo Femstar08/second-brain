@@ -17,16 +17,20 @@ import {
 import { startSchedulerLoop, createScheduledTask } from "./heartbeat/scheduler.js";
 import { logger } from "./logger.js";
 import { runDecaySweep } from "./memory/search.js";
-import { createAnthropicProvider } from "./providers/anthropic.js";
+import { createAnthropicProvider, createAnthropicModelOverride } from "./providers/anthropic.js";
 import { createClaudeProvider } from "./providers/claude-cli.js";
 import { createCodexProvider } from "./providers/codex-cli.js";
 import { createOllamaProvider } from "./providers/ollama.js";
 import { createOpenAIProvider } from "./providers/openai.js";
-import { createOpenRouterProvider } from "./providers/openrouter.js";
+import { createOpenRouterProvider, createOpenRouterModelOverride } from "./providers/openrouter.js";
 import { createRouter } from "./providers/router.js";
 import type { Provider } from "./providers/types.js";
 import { loadSkills } from "./skills/loader.js";
 import { matchSkills, buildSkillContext } from "./skills/registry.js";
+import { loadAgentRegistry } from "./agents/registry.js";
+import { createAgentInstance } from "./agents/factory.js";
+import { createCoordinator } from "./agents/coordinator.js";
+import type { Coordinator } from "./agents/coordinator.js";
 
 const PROFILE_LOCK_NAME = `second-brain${process.argv.includes("--profile") ? "-" + process.argv[process.argv.indexOf("--profile") + 1] : ""
   }.pid`;
@@ -151,8 +155,13 @@ async function main(): Promise<void> {
     config.providers.ollama.baseUrl,
   );
 
-  const router = createRouter(providers, config.provider);
-  logger.info({ provider: config.provider }, "Provider router ready");
+  const router = createRouter(providers, config.provider, {
+    failover: config.routing.failover,
+    showRouteInfo: config.routing.showRouteInfo,
+    smartRouting: config.routing.smartRouting,
+    tiers: config.routing.tiers,
+  });
+  logger.info({ provider: config.provider, smartRouting: config.routing.smartRouting }, "Provider router ready");
 
   // Load skills
   const skills = loadSkills(SKILLS_DIR);
@@ -179,6 +188,60 @@ async function main(): Promise<void> {
     appConfig: config,
   });
 
+  // ---------------------------------------------------------------------------
+  // Agent hierarchy (opt-in via config.agents.enabled)
+  // ---------------------------------------------------------------------------
+  let coordinator: Coordinator | null = null;
+  if (config.agents?.enabled) {
+    const registry = loadAgentRegistry(PROJECT_ROOT);
+    if (registry) {
+      logger.info(
+        { supervisors: registry.supervisors.length, workers: registry.workers.length },
+        "Agent registry loaded",
+      );
+
+      const createModelOverride = (baseProviderId: string, model: string) => {
+        if (baseProviderId === "openrouter" && orKey) {
+          return createOpenRouterModelOverride(orKey, model);
+        }
+        if (baseProviderId === "anthropic" && anthropicKey) {
+          return createAnthropicModelOverride(anthropicKey, model);
+        }
+        return providers[baseProviderId];
+      };
+
+      const factoryDeps = {
+        providers,
+        createModelOverride,
+        db,
+        memoryDir: MEMORY_DIR,
+      };
+
+      const agentInstances = new Map<string, import("./agents/types.js").AgentInstance>();
+      for (const sDef of registry.supervisors) {
+        agentInstances.set(sDef.id, createAgentInstance(sDef, factoryDeps));
+      }
+      for (const wDef of registry.workers) {
+        agentInstances.set(wDef.id, createAgentInstance(wDef, factoryDeps));
+      }
+
+      coordinator = createCoordinator({
+        registry,
+        agents: agentInstances,
+        fallbackHandler: (msg) => agent.handleMessage(msg),
+        classifierProvider: providers[registry.coordinator.providerId] ?? providers.claude,
+        db,
+      });
+
+      logger.info("Agent hierarchy active");
+    }
+  }
+
+  // Unified message handler: coordinator if active, otherwise direct agent
+  const handleMessage = coordinator
+    ? (msg: import("./core/agent.js").InboundMessage) => coordinator!.handleMessage(msg)
+    : (msg: import("./core/agent.js").InboundMessage) => agent.handleMessage(msg);
+
   // Start all configured channels
   const adapters: ChannelAdapter[] = [];
 
@@ -187,7 +250,7 @@ async function main(): Promise<void> {
     createWebAdapter({
       port: config.channels.web.port,
       host: config.channels.web.host,
-      onMessage: (msg) => agent.handleMessage(msg),
+      onMessage: (msg) => handleMessage(msg),
     }),
   );
 
@@ -197,13 +260,13 @@ async function main(): Promise<void> {
     const allowedIds = (env.TELEGRAM_ALLOWED_CHAT_IDS ?? "").split(",").filter(Boolean);
     const { createTelegramAdapter } = await import("./channels/telegram.js");
     adapters.push(
-      createTelegramAdapter(telegramToken, allowedIds, (msg) => agent.handleMessage(msg)),
+      createTelegramAdapter(telegramToken, allowedIds, (msg) => handleMessage(msg)),
     );
   }
 
   // CLI — start if no other interactive channels, or if explicitly requested
   if (adapters.length === 0) {
-    adapters.push(createCLIAdapter((msg) => agent.handleMessage(msg)));
+    adapters.push(createCLIAdapter((msg) => handleMessage(msg)));
   }
 
   logger.info({ channels: adapters.map((a) => a.id) }, "Channels configured");
@@ -234,6 +297,9 @@ async function main(): Promise<void> {
       async (chatId, text) => {
         await Promise.all(adapters.map((a) => a.send(chatId, text)));
       },
+      coordinator
+        ? async (prompt, chatId, agentId) => coordinator!.runAgent(agentId, prompt, chatId)
+        : undefined,
     );
     logger.info("Scheduler started");
   }
