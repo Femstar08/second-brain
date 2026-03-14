@@ -27,11 +27,23 @@ function buildUserContent(prompt: string, media?: MediaAttachment[]): ContentBlo
   return parts;
 }
 
-export function createAnthropicProvider(apiKey: string, model: string): Provider {
+/**
+ * Create an Anthropic provider with a specific model override.
+ * Each call returns an independent instance with its own message history.
+ */
+export function createAnthropicModelOverride(apiKey: string, model: string): Provider {
+  const provider = createAnthropicProvider(apiKey, model);
+  return { ...provider, id: `anthropic:${model}` };
+}
+
+export function createAnthropicProvider(apiKey: string, initialModel: string): Provider {
+  let model = initialModel;
   const history: Map<string, Array<{ role: string; content: ContentBlock[] | string }>> = new Map();
 
   return {
     id: "anthropic",
+    getModel() { return model; },
+    setModel(m: string) { model = m; },
     async send(prompt: string, context: ConversationContext): Promise<ProviderResult> {
       const messages = history.get(context.chatId) ?? [];
       const systemContent = [context.memoryContext, context.skillContext]

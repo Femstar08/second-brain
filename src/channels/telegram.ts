@@ -114,17 +114,34 @@ export function createTelegramAdapter(
 
       clearInterval(typingInterval);
 
-      const chunks = splitMessage(result.text);
-      for (const chunk of chunks) {
-        if (!chunk.trim()) continue;
+      // If result has inline buttons, send with reply markup
+      if (result.buttons?.length) {
+        const keyboard = result.buttons.map(row =>
+          row.map(btn => ({ text: btn.text, callback_data: btn.callbackData }))
+        );
         try {
-          await ctx.reply(formatForTelegram(chunk), { parse_mode: "HTML" });
-        } catch (err1) {
-          logger.warn({ err: err1 }, "Failed HTML reply, falling back to plain text");
+          await ctx.reply(formatForTelegram(result.text), {
+            parse_mode: "HTML",
+            reply_markup: { inline_keyboard: keyboard },
+          });
+        } catch {
+          await ctx.reply(result.text, {
+            reply_markup: { inline_keyboard: keyboard },
+          }).catch(() => {});
+        }
+      } else {
+        const chunks = splitMessage(result.text);
+        for (const chunk of chunks) {
+          if (!chunk.trim()) continue;
           try {
-            await ctx.reply(chunk);
-          } catch (err2) {
-            logger.error({ err: err2, chunk }, "Failed plain text reply fallback");
+            await ctx.reply(formatForTelegram(chunk), { parse_mode: "HTML" });
+          } catch (err1) {
+            logger.warn({ err: err1 }, "Failed HTML reply, falling back to plain text");
+            try {
+              await ctx.reply(chunk);
+            } catch (err2) {
+              logger.error({ err: err2, chunk }, "Failed plain text reply fallback");
+            }
           }
         }
       }
@@ -189,6 +206,26 @@ export function createTelegramAdapter(
     await ctx.reply(`Your chat ID: <code>${ctx.chat.id}</code>`, {
       parse_mode: "HTML",
     });
+  });
+
+  // Callback queries (inline button presses)
+  bot.on("callback_query:data", async (ctx) => {
+    if (!isAuthorized(ctx.chat!.id)) return;
+    const data = ctx.callbackQuery.data;
+
+    // Route model: callbacks back to the agent as /model commands
+    if (data.startsWith("model:")) {
+      const model = data.slice(6);
+      await ctx.answerCallbackQuery({ text: `Switching to ${model}...` });
+      // Edit the original message to remove buttons
+      try {
+        await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
+      } catch { /* ignore if message can't be edited */ }
+      await handleAndRespond(ctx, `/model ${model}`);
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
   });
 
   // Text messages

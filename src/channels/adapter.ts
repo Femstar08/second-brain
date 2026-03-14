@@ -17,4 +17,4 @@ export type MessageHandler = (msg: {
   senderId: string;
   platform: string;
   media?: MediaAttachment[];
-}) => Promise<{ text: string }>;
+}) => Promise<{ text: string; buttons?: Array<Array<{ text: string; callbackData: string }>> }>;

@@ -36,11 +36,14 @@ function buildUserContent(prompt: string, media?: MediaAttachment[]): MessageCon
   return parts;
 }
 
-export function createOpenAIProvider(apiKey: string, model: string): Provider {
+export function createOpenAIProvider(apiKey: string, initialModel: string): Provider {
+  let model = initialModel;
   const history: Map<string, Array<{ role: string; content: MessageContent }>> = new Map();
 
   return {
     id: "openai",
+    getModel() { return model; },
+    setModel(m: string) { model = m; },
     async send(prompt: string, context: ConversationContext): Promise<ProviderResult> {
       const messages = history.get(context.chatId) ?? [];
       const systemContent = [context.memoryContext, context.skillContext]

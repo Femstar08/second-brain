@@ -13,6 +13,8 @@ export interface ScheduledTask {
   lastRun: number | null;
   lastResult: string | null;
   status: string;
+  /** If set, route this task to a specific agent instead of the default provider */
+  agentId?: string;
 }
 
 /**
@@ -54,7 +56,7 @@ export function getDueTasks(db: Database): ScheduledTask[] {
   return db
     .prepare(
       `SELECT id, chat_id AS chatId, prompt, schedule, next_run AS nextRun,
-              last_run AS lastRun, last_result AS lastResult, status
+              last_run AS lastRun, last_result AS lastResult, status, agent_id AS agentId
        FROM scheduled_tasks
        WHERE status = 'active' AND next_run <= ?`,
     )
@@ -81,6 +83,7 @@ export function updateTaskAfterRun(db: Database, taskId: string, result: string)
 
 export type SendFn = (chatId: string, text: string) => Promise<void>;
 export type RunFn = (prompt: string, chatId: string) => Promise<string>;
+export type AgentRunFn = (prompt: string, chatId: string, agentId: string) => Promise<string>;
 
 /** If the provider responds with just HEARTBEAT_OK, suppress the message to the channel. */
 const HEARTBEAT_OK = /HEARTBEAT_OK/i;
@@ -89,20 +92,26 @@ const HEARTBEAT_OK = /HEARTBEAT_OK/i;
  * Start a polling loop that checks for due tasks every `intervalMs` milliseconds.
  * For each due task, runs the prompt via `run`, updates the DB, and sends the
  * result to the channel unless the response is a HEARTBEAT_OK suppression signal.
+ *
+ * If `agentRun` is provided and a task has an `agent_id`, the task is dispatched
+ * to that specific agent instead of the default provider.
  */
 export function startSchedulerLoop(
   db: Database,
   run: RunFn,
   send: SendFn,
+  agentRun?: AgentRunFn,
   intervalMs = 60_000,
 ): { stop: () => void } {
   const timer = setInterval(async () => {
     const tasks = getDueTasks(db);
     for (const task of tasks) {
-      logger.info({ taskId: task.id, prompt: task.prompt.slice(0, 50) }, "Running scheduled task");
+      logger.info({ taskId: task.id, agentId: task.agentId, prompt: task.prompt.slice(0, 50) }, "Running scheduled task");
       try {
         const result = await withTimeout(
-          run(task.prompt, task.chatId),
+          task.agentId && agentRun
+            ? agentRun(task.prompt, task.chatId, task.agentId)
+            : run(task.prompt, task.chatId),
           120_000,
           `Scheduled task ${task.id}`,
         );

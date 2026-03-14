@@ -59,7 +59,30 @@ export function initDatabase(dbPath: string): Database {
     );
 
     CREATE INDEX IF NOT EXISTS idx_tasks_due ON scheduled_tasks(status, next_run);
+
+    CREATE TABLE IF NOT EXISTS agent_audit (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      chat_id TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      result TEXT NOT NULL,
+      duration_ms INTEGER NOT NULL,
+      mode TEXT NOT NULL CHECK(mode IN ('prototype','enterprise')),
+      error TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_task ON agent_audit(task_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_agent ON agent_audit(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_chat ON agent_audit(chat_id, created_at);
   `);
+
+  // Migration: add agent_id column to scheduled_tasks if missing
+  const cols = db.prepare("PRAGMA table_info(scheduled_tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "agent_id")) {
+    db.exec("ALTER TABLE scheduled_tasks ADD COLUMN agent_id TEXT");
+  }
 
   initMediaSchema(db);
 

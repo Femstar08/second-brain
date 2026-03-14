@@ -1,13 +1,90 @@
 import { readFileSync } from "node:fs";
-import { fetchWithTimeout } from "../fetch.js";
+import http from "node:http";
+import https from "node:https";
 import { logger } from "../logger.js";
 import type { Provider, ProviderResult, ConversationContext } from "./types.js";
 
-export function createOllamaProvider(model: string, baseUrl = "http://localhost:11434"): Provider {
+/**
+ * Stream a chat completion from Ollama using the http module.
+ * Streaming avoids the runner getting wedged on timeouts (which happens
+ * with stream:false when the connection drops mid-generation).
+ */
+function ollamaChat(
+  url: string,
+  payload: object,
+  timeoutMs: number,
+): Promise<{ content: string }> {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ ...payload, stream: true });
+    const parsed = new URL(url);
+    const transport = parsed.protocol === "https:" ? https : http;
+
+    const req = transport.request(
+      {
+        hostname: parsed.hostname,
+        port: parsed.port,
+        path: parsed.pathname,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+          Connection: "close",
+        },
+      },
+      (res) => {
+        if (res.statusCode !== 200) {
+          let errBody = "";
+          res.on("data", (c: Buffer) => { errBody += c; });
+          res.on("end", () => reject(new Error(`Ollama ${res.statusCode}: ${errBody}`)));
+          return;
+        }
+
+        let content = "";
+        let buf = "";
+        res.on("data", (chunk: Buffer) => {
+          buf += chunk;
+          // Ollama streams newline-delimited JSON
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const obj = JSON.parse(line);
+              if (obj.message?.content) content += obj.message.content;
+            } catch { /* partial line, skip */ }
+          }
+        });
+        res.on("end", () => {
+          // Process any remaining buffer
+          if (buf.trim()) {
+            try {
+              const obj = JSON.parse(buf);
+              if (obj.message?.content) content += obj.message.content;
+            } catch { /* ignore */ }
+          }
+          resolve({ content });
+        });
+      },
+    );
+
+    req.on("error", reject);
+    req.setTimeout(timeoutMs, () => {
+      req.destroy();
+      reject(new Error(`Request to ${url} timed out after ${timeoutMs}ms`));
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
+export function createOllamaProvider(initialModel: string, baseUrl = "http://127.0.0.1:11434"): Provider {
+  let model = initialModel;
   const history: Map<string, Array<{ role: string; content: string }>> = new Map();
 
   return {
     id: "ollama",
+    getModel() { return model; },
+    setModel(m: string) { model = m; },
     async send(prompt: string, context: ConversationContext): Promise<ProviderResult> {
       const messages = history.get(context.chatId) ?? [];
       const systemContent = [context.memoryContext, context.skillContext]
@@ -24,9 +101,8 @@ export function createOllamaProvider(model: string, baseUrl = "http://localhost:
         userMessage.images = images;
       }
 
-      const body = {
+      const payload = {
         model,
-        stream: false,
         messages: [
           ...(systemContent ? [{ role: "system", content: systemContent }] : []),
           ...messages,
@@ -34,21 +110,8 @@ export function createOllamaProvider(model: string, baseUrl = "http://localhost:
         ],
       };
 
-      const res = await fetchWithTimeout(`${baseUrl}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        timeoutMs: 120_000,
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        logger.error({ status: res.status, text }, "Ollama error");
-        throw new Error(`Ollama ${res.status}: ${text}`);
-      }
-
-      const data = (await res.json()) as { message: { content: string } };
-      const responseText = data.message?.content ?? "";
+      const res = await ollamaChat(`${baseUrl}/api/chat`, payload, 300_000);
+      const responseText = res.content;
 
       // Store text-only in history
       messages.push({ role: "user", content: prompt });
